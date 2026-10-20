@@ -11,8 +11,8 @@ TMP_DB="$BACKUP_DIR/daily/.activity-${STAMP}.dump.tmp"
 TMP_DATA="$BACKUP_DIR/daily/.data-${STAMP}.tar.gz.tmp"
 trap 'rm -f "$TMP_DB" "$TMP_DATA"' EXIT
 # Dump through the existing PostgreSQL container; do not start a second database.
-docker exec -e PGPASSWORD="$DB_PASSWORD" postgresql pg_dump -h 127.0.0.1 -U activity_workbench_app -d activity_workbench -Fc > "$TMP_DB"
-docker exec -e PGPASSWORD="$DB_PASSWORD" postgresql pg_restore --list < "$TMP_DB" >/dev/null
+docker exec -e PGPASSWORD="$DB_PASSWORD" postgresql pg_dump -h /var/run/postgresql -U activity_workbench_app -d activity_workbench -Fc > "$TMP_DB"
+docker exec -i -e PGPASSWORD="$DB_PASSWORD" postgresql pg_restore --list < "$TMP_DB" >/dev/null
 tar -czf "$TMP_DATA" -C "$ROOT" data
 mv "$TMP_DB" "$BACKUP_DIR/daily/activity-${STAMP}.dump"
 mv "$TMP_DATA" "$BACKUP_DIR/daily/data-${STAMP}.tar.gz"
@@ -26,11 +26,14 @@ if [[ "$(date +%u)" == "7" ]]; then
   (cd "$BACKUP_DIR/weekly" && sha256sum "activity-${STAMP}.dump" "data-${STAMP}.tar.gz" > "SHA256-${STAMP}.txt")
 fi
 # Keep at least 7 daily DB dumps + 7 daily file archives and 4 weekly copies of each.
-ls -1t "$BACKUP_DIR"/daily/activity-*.dump 2>/dev/null | tail -n +8 | xargs -r rm -f
-ls -1t "$BACKUP_DIR"/daily/data-*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm -f
-ls -1t "$BACKUP_DIR"/daily/SHA256-*.txt 2>/dev/null | tail -n +8 | xargs -r rm -f
-ls -1t "$BACKUP_DIR"/weekly/activity-*.dump 2>/dev/null | tail -n +5 | xargs -r rm -f
-ls -1t "$BACKUP_DIR"/weekly/data-*.tar.gz 2>/dev/null | tail -n +5 | xargs -r rm -f
-ls -1t "$BACKUP_DIR"/weekly/SHA256-*.txt 2>/dev/null | tail -n +5 | xargs -r rm -f
+# `|| true` guards each cleanup pipeline: ls exits non-zero when a glob has no match
+# (e.g. empty weekly/ dir), which under `set -euo pipefail` would abort the script
+# after the backup was already written successfully.
+ls -1t "$BACKUP_DIR"/daily/activity-*.dump 2>/dev/null | tail -n +8 | xargs -r rm -f || true
+ls -1t "$BACKUP_DIR"/daily/data-*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm -f || true
+ls -1t "$BACKUP_DIR"/daily/SHA256-*.txt 2>/dev/null | tail -n +8 | xargs -r rm -f || true
+ls -1t "$BACKUP_DIR"/weekly/activity-*.dump 2>/dev/null | tail -n +5 | xargs -r rm -f || true
+ls -1t "$BACKUP_DIR"/weekly/data-*.tar.gz 2>/dev/null | tail -n +5 | xargs -r rm -f || true
+ls -1t "$BACKUP_DIR"/weekly/SHA256-*.txt 2>/dev/null | tail -n +5 | xargs -r rm -f || true
 trap - EXIT
 echo "PASS backup created: $BACKUP_DIR/daily/activity-${STAMP}.dump and data-${STAMP}.tar.gz"
