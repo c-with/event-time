@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+data/
+backups/
+logs/
+migration-source/*
+!migration-source/.gitkeep
+.coverage
+.pytest_cache/

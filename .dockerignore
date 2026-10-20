@@ -1,0 +1,10 @@
+.git
+.env
+data
+backups
+logs
+migration-source
+__pycache__
+.venv
+venv
+*.zip

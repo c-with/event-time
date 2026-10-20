@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title>活动执行工作台 · Event Time</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="login-screen" class="login-screen hidden">
+    <form id="login-form" class="login-card">
+      <div class="brand-mark">ET</div>
+      <p class="eyebrow">EVENT TIME · V0.4.1</p>
+      <h1>活动执行工作台</h1>
+      <p class="muted">从需求登记到现场执行，把项目、场次、物料和资料放在同一条工作线上。</p>
+      <label>共享账号<input id="login-username" autocomplete="username" required value="activity"></label>
+      <label>密码<input id="login-password" type="password" autocomplete="current-password" required></label>
+      <p id="login-error" class="form-error"></p>
+      <button class="btn btn-primary btn-full" type="submit">登录工作台 <span>↗</span></button>
+      <p class="tiny muted">请使用部署时配置的共享账号。首次登录后，在本设备选择操作人姓名。</p>
+    </form>
+  </div>
+
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand-row"><div class="brand-mark">ET</div><div><strong>活动执行工作台</strong><small>EVENT TIME · 0.4.1</small></div></div>
+      <div class="workspace-label">工作空间</div>
+      <nav class="main-nav">
+        <button data-nav="home" class="nav-item active"><span class="nav-icon">◫</span><span>首页总览</span><kbd>01</kbd></button>
+        <button data-nav="projects" class="nav-item"><span class="nav-icon">▤</span><span>项目台账</span><kbd>02</kbd></button>
+        <button data-nav="resources" class="nav-item"><span class="nav-icon">▦</span><span>资源总库</span><kbd>03</kbd></button>
+        <button data-nav="changes" class="nav-item"><span class="nav-icon">↻</span><span>变更待确认</span><span id="nav-change-count" class="nav-count hidden">0</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="system-note"><span class="status-dot"></span><div><strong>数据已连接</strong><small>项目数据统一保存</small></div></div>
+        <button id="operator-button" class="operator-button"><span class="avatar" id="operator-avatar">?</span><span class="operator-copy"><strong id="operator-name">选择操作人</strong><small>本设备操作身份</small></span><span class="chevron">⌄</span></button>
+        <button id="logout-button" class="logout-button">退出登录</button>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="breadcrumbs"><span class="breadcrumb-muted">工作空间</span><span class="crumb-slash">/</span><strong id="page-title">首页总览</strong></div>
+        <div class="top-actions">
+          <label class="global-search"><span>⌕</span><input id="global-search" placeholder="搜索项目、客户、场地、任务…" autocomplete="off"><kbd>⌘ K</kbd></label>
+          <button class="icon-button" id="refresh-button" title="刷新数据">⟳</button>
+          <button class="btn btn-primary btn-small" id="top-create-project">＋ 新建项目</button>
+        </div>
+      </header>
+      <div id="search-results" class="search-results hidden"></div>
+      <section id="page-content" class="page-content" aria-live="polite"></section>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
