@@ -2,6 +2,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+# Load deployment settings for host-side commands (not only Docker Compose).
+if [[ -f .env ]]; then
+  set -a
+  source ./.env
+  set +a
+fi
 cmd="${1:-help}"
 case "$cmd" in
   build)
