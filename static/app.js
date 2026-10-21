@@ -201,6 +201,62 @@
     const iso = x => `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
     state.calendar = await api(`/api/calendar?from=${iso(start)}&to=${iso(end)}`);
   }
+  function calendarColorClass(session) {
+   const identity = String(session.id || session.project_id || '');
+   let hash = 2166136261;
+   for (let i=0;i<identity.length;i++) { hash ^= identity.charCodeAt(i); hash=Math.imul(hash,16777619); }
+   return 'cal-theme-'+((hash>>>0)%12);
+  }
+
+  function calendarSessionsOn(key) {
+   return (state.calendar?.sessions||[]).filter(s => {
+     const from=(s.date_mode==='window'?s.window_start:s.starts_at)||'';
+     const to=(s.date_mode==='window'?s.window_end:s.ends_at)||from;
+     return from && from.slice(0,10)<=key && to.slice(0,10)>=key;
+   }).sort((a,b)=>{
+     const af=a.date_mode==='window'?a.window_start:a.starts_at;
+     const bf=b.date_mode==='window'?b.window_start:b.starts_at;
+     return String(af||'').localeCompare(String(bf||''))||String(a.id).localeCompare(String(b.id));
+   });
+  }
+
+  function calendarNodesOn(key) {
+   return (state.calendar?.time_nodes||[]).filter(n=>n.planned_start&&n.planned_start.slice(0,10)===key)
+   .sort((a,b)=>String(a.planned_start).localeCompare(String(b.planned_start)));
+  }
+
+  function openDayModal(key) {
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(key))return;
+   const sessions=calendarSessionsOn(key), nodes=calendarNodesOn(key);
+   const parsed=new Date(key+'T12:00:00');
+   const heading=Number.isNaN(parsed.getTime())?key:new Intl.DateTimeFormat('zh-CN',{year:'numeric',month:'long',day:'numeric',weekday:'long'}).format(parsed);
+   const cards=sessions.map(s=>{
+     const isWindow=s.date_mode==='window', name=s.project?.name||s.title||'未命名活动';
+     const subtitle=s.title&&s.title!==name?s.title:'';
+     const timeText=isWindow?'择日窗口：'+fmtDate(s.window_start)+' — '+fmtDate(s.window_end)+'（非连续举办）':fmtDateTime(s.starts_at)+(s.ends_at?' — '+fmtDateTime(s.ends_at):'');
+     const venue=s.venue||s.location_text||'地点待确认';
+     return `<article class="day-detail-card ${calendarColorClass(s)} ${s.is_past?'past':''}">
+       <div class="day-detail-head"><div><strong>${esc(name)}</strong>${subtitle?`<p>${esc(subtitle)}</p>`:''}</div>
+       ${statusTag(s.status||'待确认')}</div>
+       <p>◷ ${esc(timeText)}</p><p>⌖ ${esc(venue)}</p>
+       ${isWindow?'<p class="day-detail-window">择日待定，尚未确认该日举行。</p>':''}
+       ${s.has_risk?'<p class="day-detail-risk">⚠ 该项目存在待处理风险</p>':''}
+       ${s.notes?`<p class="day-detail-notes">${esc(s.notes)}</p>`:''}
+       <button type="button" class="btn btn-secondary" data-action="open-session" data-project-id="${esc(s.project_id)}" data-session-id="${esc(s.id)}">查看项目详情 →</button>
+     </article>`;
+   }).join('');
+   const timeline=nodes.map(n=>`<div class="day-detail-node"><div><strong>${esc(n.node_type||'执行节点')}${n.label&&n.label!==n.node_type?' · '+esc(n.label):''}</strong>
+      <p>${esc(n.project_name||'未命名项目')}${n.session_title?' · '+esc(n.session_title):''}</p>
+      <p>${esc(n.responsible||'负责人待确认')} · ${esc(n.date_status||n.status||'待确认')}</p></div>
+      <span>${esc(fmtDateTime(n.planned_start))}</span></div>`).join('');
+   modalRoot.innerHTML=`<div class="modal-backdrop day-detail-backdrop"><section class="modal wide day-detail-modal" role="dialog" aria-modal="true" aria-labelledby="day-detail-title">
+   <header class="modal-header"><div><h2 id="day-detail-title">${esc(heading)}</h2><p>${sessions.length} 项活动 · ${nodes.length} 个执行节点</p></div>
+   <button type="button" class="modal-close" data-action="close-modal" aria-label="关闭">×</button></header>
+   <div class="modal-body day-detail-body"><h3>当天活动 / 择日候选</h3>${cards||'<p class="day-detail-empty">当天暂无活动</p>'}
+   <h3>布场、彩排、撤场及其他执行节点</h3>${timeline||'<p class="day-detail-empty">当天暂无执行节点</p>'}</div>
+   <footer class="modal-footer"><button type="button" class="btn btn-secondary" data-action="close-modal">关闭</button></footer></section></div>`;
+   const close=$('[data-action="close-modal"]',modalRoot);if(close)close.focus();
+  }
   async function renderCalendar(dashboard = null) {
     await fetchCalendar();
     const host = $('#calendar-host'); if (!host) return;
@@ -214,22 +270,20 @@
     let html = `<div class="calendar-grid">${weekdays.map(w=>`<div class="calendar-weekday">${w}</div>`).join('')}`;
     for (const day of days) {
       const key = dateKey(day);
-      const todays = sessions.filter(s => {
-        const startDate = (s.date_mode === 'window' ? s.window_start : s.starts_at) || '';
-        const endDate = (s.date_mode === 'window' ? s.window_end : s.ends_at) || startDate;
-        return startDate && startDate.slice(0,10) <= key && endDate.slice(0,10) >= key;
-      });
+      const todays = calendarSessionsOn(key);
+      const nodes = calendarNodesOn(key);
       const visible = todays.slice(0,3);
-      html += `<div class="calendar-day ${day.getMonth()!==d.getMonth()?'outside':''} ${dateKey(day)===dateKey(now)?'today':''}" data-date="${key}"><div class="day-number">${day.getDate()}</div><div class="day-events">`;
+      html += `<div class="calendar-day ${day.getMonth()!==d.getMonth()?'outside':''} ${dateKey(day)===dateKey(now)?'today':''}" data-date="${key}"><button type="button" class="day-number" data-action="open-day" data-date="${key}" aria-label="查看 ${key} 的 ${todays.length} 项活动">${day.getDate()}</button><div class="day-events">`;
       html += visible.map(s => {
         const isWindow = s.date_mode === 'window';
         const from = ((isWindow?s.window_start:s.starts_at)||'').slice(0,10), to = ((isWindow?s.window_end:s.ends_at)||from).slice(0,10);
         const pos = from === key ? 'start' : to === key ? 'end' : 'middle';
-        const cls = `${isWindow?'window':(s.is_past?'past':'')} ${s.has_risk?'risk':''} ${pos}`;
+        const cls = `${calendarColorClass(s)} ${isWindow?'window':(s.is_past?'past':'')} ${s.has_risk?'risk':''} ${pos}`;
         const title = `${isWindow?'择日 · ':''}${s.project?.name || s.title}`;
         return `<button draggable="${isWindow?'false':'true'}" class="event-pill ${cls}" title="${esc(title)}" data-action="open-session" data-session-id="${s.id}" data-project-id="${s.project_id}" data-date="${key}" data-start="${esc(s.starts_at||'')}" data-end="${esc(s.ends_at||'')}" data-revision="${s.revision}">${esc(title)}</button>`;
       }).join('');
-      if (todays.length>3) html += `<div class="more-events">另有 ${todays.length-3} 项</div>`;
+      if (todays.length>3) html += `<button type="button" class="more-events" data-action="open-day" data-date="${key}">另有 ${todays.length-3} 项，查看全部 →</button>`;
+      if (nodes.length) html += `<button type="button" class="day-node-count" data-action="open-day" data-date="${key}">◷ ${nodes.length} 个执行节点</button>`;
       html += `</div></div>`;
     }
     html += `</div>`;
@@ -610,7 +664,8 @@
       if(action==='calendar-prev'){state.calendarDate.setMonth(state.calendarDate.getMonth()-1);return renderCalendar(state.dashboard);}
       if(action==='calendar-next'){state.calendarDate.setMonth(state.calendarDate.getMonth()+1);return renderCalendar(state.dashboard);}
       if(action==='calendar-today'){state.calendarDate=new Date();return renderCalendar(state.dashboard);}
-      if(action==='open-session'){const id=b.dataset.projectId;const sessionId=b.dataset.sessionId;state.projectId=id;state.page='project-detail';state.projectTab='schedule';location.hash=`#/projects/${id}?tab=schedule`;await loadProject();return;}
+      if(action==='open-day'){openDayModal(b.dataset.date);return;}
+      if(action==='open-session'){closeModal();const id=b.dataset.projectId;const sessionId=b.dataset.sessionId;state.projectId=id;state.page='project-detail';state.projectTab='schedule';location.hash=`#/projects/${id}?tab=schedule`;await loadProject();return;}
       if(action==='reschedule-session')return rescheduleSession(b.dataset.id);
       if(action==='resource-tab'){state.resourceKind=b.dataset.kind;return loadResources();}
       if(action==='new-resource')return openResourceForm();
@@ -621,7 +676,14 @@
     } catch(err) { toast(err.message || '操作失败', 'error'); }
   }
   root.addEventListener('click',handleClick);
+  root.addEventListener('click', e=>{
+    const day=e.target.closest('.calendar-day');
+    if(day&&!e.target.closest('[data-action]'))openDayModal(day.dataset.date);
+  });
   modalRoot.addEventListener('click',handleClick);
+  modalRoot.addEventListener('click',e=>{
+    if(e.target.classList.contains('day-detail-backdrop'))closeModal();
+  });
   $('#search-results').addEventListener('click',e=>{const b=e.target.closest('[data-search-url]');if(!b)return;$('#search-results').classList.add('hidden');state.searchOpen=false;location.hash=b.dataset.searchUrl;});
 
   async function confirmChange(id) {
