@@ -515,7 +515,7 @@ def create_app(test_config: dict | None = None) -> Flask:
             abort(404, description="实体不存在")
         return obj
 
-    def apply_entity_changes(entity_type, entity_id, changes, actor, source_ref="", critical_confirmed=False, expected_revision=None):
+    def apply_entity_changes(entity_type, entity_id, changes, actor, source_ref="", critical_confirmed=False, expected_revision=None, commit=True):
         obj = get_entity(entity_type, entity_id)
         allowed = FIELD_ALLOWLIST.get(entity_type, set())
         clean = {k: v for k, v in changes.items() if k in allowed}
@@ -581,9 +581,12 @@ def create_app(test_config: dict | None = None) -> Flask:
                 db.session.add(FieldRevision(entity_type=entity_type, entity_id=entity_id, field_path=field,
                     revision=current_revision, value_json=value, actor=actor))
             write_audit(actor, "update", entity_type, entity_id, before=before_direct, after=after_direct, source_ref=source_ref)
-        db.session.commit()
-        return {"entity": serialize_entity(entity_type, get_entity(entity_type, entity_id)),
-                "proposed_changes": proposed, "revision": current_revision}, 200
+        db.session.flush()
+        result = {"entity": serialize_entity(entity_type, get_entity(entity_type, entity_id)),
+                  "proposed_changes": proposed, "revision": current_revision}
+        if commit:
+            db.session.commit()
+        return result, 200
 
     def serialize_entity(entity_type, obj):
         if entity_type == "projects": return serialize_project(obj, compact=True)
@@ -957,64 +960,97 @@ def create_app(test_config: dict | None = None) -> Flask:
                                               critical_confirmed=bool(payload.get("confirm_critical")), expected_revision=payload.get("_revision"))
         return jsonify(result), status
 
+    def patch_with_links(entity_type, entity_id, payload, actor, link_field, related_model):
+        """Validate all relationships before any write; commit fields, links and audit together."""
+        obj = get_entity(entity_type, entity_id)
+        scalars = {k: v for k, v in payload.items() if k != link_field}
+        # The task editor also submits requirement_ids. Validate both relationship collections.
+        relation_fields = {"tasks": {"dependency_ids", "requirement_ids"},
+                           "work_packages": {"session_ids"},
+                           "requirements": {"task_ids"}}[entity_type]
+        scalars = {k: v for k, v in payload.items() if k not in relation_fields}
+        links = {}
+        for name in relation_fields:
+            if name not in payload:
+                continue
+            raw = payload[name]
+            if not isinstance(raw, list):
+                return {"error": f"{name} 必须是列表"}, 400
+            ids = list(dict.fromkeys(raw))
+            if any(not isinstance(x, str) or not x for x in ids):
+                return {"error": f"{name} 中包含无效 ID"}, 400
+            objects = [db.session.get({"dependency_ids": Task, "requirement_ids": RequirementItem,
+                                       "session_ids": EventSession, "task_ids": Task}[name], x) for x in ids]
+            if any(x is None or x.project_id != obj.project_id for x in objects):
+                return {"error": f"{name} 包含其他项目或不存在的记录"}, 400
+            if name == "dependency_ids":
+                if obj.id in ids or any(dependency_would_cycle(obj.id, dep) for dep in ids):
+                    return {"error": "依赖关系会形成循环，未保存"}, 400
+            links[name] = objects
+        try:
+            result, status = apply_entity_changes(entity_type, entity_id, scalars, actor,
+                payload.get("source_ref", ""), critical_confirmed=bool(payload.get("confirm_critical")),
+                expected_revision=payload.get("_revision"), commit=False)
+            if status != 200:
+                db.session.rollback()
+                return result, status
+            changed = {}
+            if "session_ids" in links:
+                before = [x.id for x in obj.sessions]
+                obj.sessions = links["session_ids"]
+                changed["session_ids"] = {"before": before, "after": [x.id for x in obj.sessions]}
+            if "task_ids" in links:
+                before = [x.id for x in obj.tasks]
+                obj.tasks = links["task_ids"]
+                changed["task_ids"] = {"before": before, "after": [x.id for x in obj.tasks]}
+            if "requirement_ids" in links:
+                before = [x.id for x in obj.requirements]
+                obj.requirements = links["requirement_ids"]
+                changed["requirement_ids"] = {"before": before, "after": [x.id for x in obj.requirements]}
+            if "dependency_ids" in links:
+                before = [x.depends_on_task_id for x in obj.dependencies]
+                obj.dependencies.clear()
+                db.session.flush()
+                for dep in links["dependency_ids"]:
+                    obj.dependencies.append(TaskDependency(depends_on=dep, description="", dependency_type="blocks"))
+                changed["dependency_ids"] = {"before": before, "after": [x.id for x in links["dependency_ids"]]}
+            effective = {k: v for k, v in changed.items() if v["before"] != v["after"]}
+            if effective:
+                obj.revision += 1
+                if hasattr(obj, "updated_at"):
+                    obj.updated_at = utcnow()
+                write_audit(actor, "update_links", entity_type, obj.id,
+                            before={k:v["before"] for k,v in effective.items()},
+                            after={k:v["after"] for k,v in effective.items()},
+                            source_ref=payload.get("source_ref", ""))
+            db.session.flush()
+            result["entity"] = serialize_entity(entity_type, obj)
+            result["revision"] = obj.revision
+            db.session.commit()
+            return result, 200
+        except Exception:
+            db.session.rollback()
+            raise
+
     @app.patch("/api/work-packages/<entity_id>")
     @login_required
     def patch_work_package(entity_id):
-        payload = request.get_json(silent=True) or {}
-        result, status = apply_entity_changes("work_packages", entity_id, payload, operator_name(), payload.get("source_ref", ""),
-                                              critical_confirmed=bool(payload.get("confirm_critical")), expected_revision=payload.get("_revision"))
-        if status == 200 and "session_ids" in payload:
-            obj = db.session.get(WorkPackage, entity_id)
-            ids = payload.get("session_ids") or []
-            sessions = [db.session.get(EventSession, sid) for sid in ids]
-            if any(not s or s.project_id != obj.project_id for s in sessions):
-                return jsonify(error="关联场次不属于当前项目"), 400
-            obj.sessions = sessions
-            write_audit(operator_name(), "update_sessions", "work_packages", obj.id, after={"session_ids": ids})
-            db.session.commit()
-            result["entity"] = serialize_package(obj)
+        result, status = patch_with_links("work_packages", entity_id, request.get_json(silent=True) or {},
+                                          operator_name(), "session_ids", EventSession)
         return jsonify(result), status
 
     @app.patch("/api/requirements/<entity_id>")
     @login_required
     def patch_requirement(entity_id):
-        payload = request.get_json(silent=True) or {}
-        result, status = apply_entity_changes("requirements", entity_id, payload, operator_name(), payload.get("source_ref", ""),
-                                              critical_confirmed=bool(payload.get("confirm_critical")), expected_revision=payload.get("_revision"))
-        if status == 200 and "task_ids" in payload:
-            obj = db.session.get(RequirementItem, entity_id)
-            tasks = [db.session.get(Task, tid) for tid in payload.get("task_ids", [])]
-            if any(not t or t.project_id != obj.project_id for t in tasks): return jsonify(error="关联任务不属于当前项目"), 400
-            obj.tasks = tasks
-            db.session.commit()
-            result["entity"] = serialize_requirement(obj)
+        result, status = patch_with_links("requirements", entity_id, request.get_json(silent=True) or {},
+                                          operator_name(), "task_ids", Task)
         return jsonify(result), status
 
     @app.patch("/api/tasks/<entity_id>")
     @login_required
     def patch_task(entity_id):
-        payload = request.get_json(silent=True) or {}
-        result, status = apply_entity_changes("tasks", entity_id, payload, operator_name(), payload.get("source_ref", ""),
-                                              critical_confirmed=bool(payload.get("confirm_critical")), expected_revision=payload.get("_revision"))
-        if status == 200 and ("dependency_ids" in payload or "requirement_ids" in payload):
-            obj = db.session.get(Task, entity_id)
-            if "dependency_ids" in payload:
-                ids = list(dict.fromkeys(payload.get("dependency_ids") or []))
-                if obj.id in ids or any(not db.session.get(Task, i) or db.session.get(Task, i).project_id != obj.project_id for i in ids):
-                    return jsonify(error="依赖任务无效"), 400
-                for dep_id in ids:
-                    if dependency_would_cycle(obj.id, dep_id): return jsonify(error="依赖关系会形成循环，未保存"), 400
-                obj.dependencies.clear()
-                db.session.flush()
-                for dep_id in ids:
-                    obj.dependencies.append(TaskDependency(depends_on_id=dep_id, description="", dependency_type="blocks"))
-            if "requirement_ids" in payload:
-                requirements = [db.session.get(RequirementItem, i) for i in payload.get("requirement_ids", [])]
-                if any(not r or r.project_id != obj.project_id for r in requirements): return jsonify(error="关联需求项不属于当前项目"), 400
-                obj.requirements = requirements
-            write_audit(operator_name(), "update_task_links", "tasks", obj.id, after={"dependency_ids": payload.get("dependency_ids"), "requirement_ids": payload.get("requirement_ids")})
-            db.session.commit()
-            result["entity"] = serialize_task(obj)
+        result, status = patch_with_links("tasks", entity_id, request.get_json(silent=True) or {},
+                                          operator_name(), "dependency_ids", Task)
         return jsonify(result), status
 
     def dependency_would_cycle(task_id, dependency_id):
