@@ -963,13 +963,25 @@ def create_app(test_config: dict | None = None) -> Flask:
     def patch_with_links(entity_type, entity_id, payload, actor, link_field, related_model):
         """Validate all relationships before any write; commit fields, links and audit together."""
         obj = get_entity(entity_type, entity_id)
-        scalars = {k: v for k, v in payload.items() if k != link_field}
         # The task editor also submits requirement_ids. Validate both relationship collections.
         relation_fields = {"tasks": {"dependency_ids", "requirement_ids"},
                            "work_packages": {"session_ids"},
                            "requirements": {"task_ids"}}[entity_type]
         scalars = {k: v for k, v in payload.items() if k not in relation_fields}
         links = {}
+        if any(name in payload for name in relation_fields):
+            # Relationships do not support field-granular rebasing yet.
+            # Prevent a stale browser form from overwriting concurrent link edits.
+            expected = payload.get("_revision")
+            if expected is None:
+                return {"error": "修改关联关系时必须提供 _revision"}, 400
+            try:
+                expected = int(expected)
+            except (ValueError, TypeError):
+                return {"error": "无效的 _revision"}, 400
+            if expected != obj.revision:
+                return {"error": "关联关系可能已被其他设备修改，请刷新后重试",
+                        "revision": obj.revision}, 409
         for name in relation_fields:
             if name not in payload:
                 continue
@@ -1019,6 +1031,11 @@ def create_app(test_config: dict | None = None) -> Flask:
                 obj.revision += 1
                 if hasattr(obj, "updated_at"):
                     obj.updated_at = utcnow()
+                for relation_name, item in effective.items():
+                    db.session.add(FieldRevision(
+                        entity_type=entity_type, entity_id=obj.id,
+                        field_path=relation_name, revision=obj.revision,
+                        value_json=item["after"], actor=actor))
                 write_audit(actor, "update_links", entity_type, obj.id,
                             before={k:v["before"] for k,v in effective.items()},
                             after={k:v["after"] for k,v in effective.items()},
