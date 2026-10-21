@@ -26,20 +26,29 @@
     if (!value) return opts.empty || '待排期';
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return String(value).slice(0,10);
-    return new Intl.DateTimeFormat('zh-CN', {month:'numeric',day:'numeric', ...(opts.year?{year:'numeric'}:{}), ...(opts.weekday?{weekday:'short'}:{})}).format(d);
+    return new Intl.DateTimeFormat('zh-CN', {timeZone:'Asia/Shanghai',month:'numeric',day:'numeric', ...(opts.year?{year:'numeric'}:{}), ...(opts.weekday?{weekday:'short'}:{})}).format(d);
   }
   function fmtDateTime(value) {
     if (!value) return '待确认';
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return String(value).replace('T',' ').slice(0,16);
-    return new Intl.DateTimeFormat('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(d);
+    return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(d);
+  }
+  const BUSINESS_TZ = 'Asia/Shanghai';
+  function businessTimeParts(value) {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return Object.fromEntries(new Intl.DateTimeFormat('en-GB',{
+      timeZone:BUSINESS_TZ,year:'numeric',month:'2-digit',day:'2-digit',
+      hour:'2-digit',minute:'2-digit',hourCycle:'h23'
+    }).formatToParts(d).filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
   }
   function fmtDateTimeInput(value) {
     if (!value) return '';
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return String(value).slice(0,16);
-    const p = n => String(n).padStart(2,'0');
-    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+    // A naive datetime-local is already a wall-clock value (no timezone).
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(value))) return String(value);
+    const p=businessTimeParts(value);
+    return p ? `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}` : String(value).slice(0,16);
   }
   function fmtBytes(n) {
     if (!Number.isFinite(Number(n))) return '';
@@ -440,8 +449,9 @@
   }
 
   function openModal({title,subtitle='',fields=[],initial={},submitLabel='保存',wide=false,note='',noteType='',onSubmit}) {
-    modalRoot.innerHTML = `<div class="modal-backdrop" data-action="close-modal"><section class="modal ${wide?'wide':''}" role="dialog" aria-modal="true"><header class="modal-header"><div><h2>${esc(title)}</h2>${subtitle?`<p>${esc(subtitle)}</p>`:''}</div><button type="button" class="modal-close" data-action="close-modal">×</button></header><form id="active-modal-form"><div class="modal-body">${note?`<div class="modal-note ${noteType}">${esc(note)}</div>`:''}<div class="form-grid">${fields.map(f=>fieldHtml(f,initial[f.name])).join('')}</div><p class="form-error" id="modal-error"></p></div><footer class="modal-footer"><button type="button" class="btn btn-secondary" data-action="close-modal">取消</button><button type="submit" class="btn btn-primary">${esc(submitLabel)}</button></footer></form></section></div>`;
+    modalRoot.innerHTML = `<div class="modal-backdrop"><section class="modal ${wide?'wide':''}" role="dialog" aria-modal="true"><header class="modal-header"><div><h2>${esc(title)}</h2>${subtitle?`<p>${esc(subtitle)}</p>`:''}</div><button type="button" class="modal-close" data-action="close-modal">×</button></header><form id="active-modal-form"><div class="modal-body">${note?`<div class="modal-note ${noteType}">${esc(note)}</div>`:''}<div class="form-grid">${fields.map(f=>fieldHtml(f,initial[f.name])).join('')}</div><p class="form-error" id="modal-error"></p></div><footer class="modal-footer"><button type="button" class="btn btn-secondary" data-action="close-modal">取消</button><button type="submit" class="btn btn-primary">${esc(submitLabel)}</button></footer></form></section></div>`;
     const form = $('#active-modal-form');
+    const activeBackdrop = modalRoot.querySelector('.modal-backdrop');
     form.addEventListener('submit', async e => {
       e.preventDefault();
       const button = $('button[type="submit"]',form); button.disabled=true; button.textContent='保存中…';
@@ -453,10 +463,20 @@
         else if (f.multiple) payload[f.name]=[...input.selectedOptions].map(o=>o.value).filter(Boolean);
         else payload[f.name]=input.value;
       });
-      try { await onSubmit(payload); closeModal(); }
-      catch(err) { $('#modal-error').textContent=err.message; button.disabled=false; button.textContent=submitLabel; }
+      try {
+        await onSubmit(payload);
+        // A multi-step action may have opened a *new* confirmation modal.
+        // Never destroy that new modal as part of the old form's completion.
+        if (modalRoot.contains(activeBackdrop)) closeModal();
+      } catch(err) {
+        if (modalRoot.contains(activeBackdrop)) {
+          $('#modal-error').textContent=err.message;
+          button.disabled=false;
+          button.textContent=submitLabel;
+        } else toast(err.message||'操作失败','error');
+      }
     });
-    modalRoot.querySelector('.modal-backdrop').addEventListener('click', e => { if (e.target.classList.contains('modal-backdrop')) closeModal(); });
+    activeBackdrop.addEventListener('click', e => { if (e.target === activeBackdrop) closeModal(); });
     const first = $('input:not([type=hidden]),select,textarea',form); if (first) setTimeout(()=>first.focus(),50);
   }
   function fieldHtml(f, initialValue) {
@@ -733,9 +753,10 @@
     const d=day.dataset.date;const s=draggedSession;draggedSession=null;
     if(!s.start){toast('该场次没有固定开始时间，不能拖动改期。','warn');return;}
     const oldStart=new Date(s.start),oldEnd=s.end?new Date(s.end):null;
-    const dur=oldEnd?oldEnd-oldStart:0;const timePart=s.start.slice(11,16)||'09:00';
-    const newStart=`${d}T${timePart}`;
-    let newEnd='';if(oldEnd){const endDate=new Date(new Date(`${d}T${timePart}`).getTime()+dur);const p=n=>String(n).padStart(2,'0');newEnd=`${endDate.getFullYear()}-${p(endDate.getMonth()+1)}-${p(endDate.getDate())}T${p(endDate.getHours())}:${p(endDate.getMinutes())}`;}
+    const dur=oldEnd?oldEnd-oldStart:0;const timePart=fmtDateTimeInput(s.start).slice(11,16)||'09:00';
+    const newStart=`${d}T${timePart}+08:00`;
+    let newEnd='';
+    if(oldEnd){ newEnd=new Date(new Date(newStart).getTime()+dur).toISOString(); }
     try {
       const data=await api(`/api/sessions/${s.id}/reschedule-preview`,json('POST',{starts_at:newStart,ends_at:newEnd}));const x=data.preview;
       const message=[`场次：${x.session_title||x.project_name}`,`原时间：${fmtDateTime(x.old.starts_at)} — ${fmtDateTime(x.old.ends_at)}`,`拟改为：${fmtDateTime(x.new.starts_at)} — ${fmtDateTime(x.new.ends_at)}`,`跟随场次移动的节点：${x.following_nodes.length}`,`固定节点待复核：${x.fixed_nodes_to_review.length}`,`关联任务需复核：${x.tasks_to_review.length}`,`供应商承诺不自动覆盖。`].join('\n');
