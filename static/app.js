@@ -217,11 +217,16 @@
    return 'cal-theme-'+((hash>>>0)%12);
   }
 
+  function calendarDateKey(value) {
+    if (!value) return '';
+    const parts = businessTimeParts(value);
+    return parts ? `${parts.year}-${parts.month}-${parts.day}` : String(value).slice(0,10);
+  }
   function calendarSessionsOn(key) {
    return (state.calendar?.sessions||[]).filter(s => {
      const from=(s.date_mode==='window'?s.window_start:s.starts_at)||'';
      const to=(s.date_mode==='window'?s.window_end:s.ends_at)||from;
-     return from && from.slice(0,10)<=key && to.slice(0,10)>=key;
+     return from && calendarDateKey(from)<=key && calendarDateKey(to)>=key;
    }).sort((a,b)=>{
      const af=a.date_mode==='window'?a.window_start:a.starts_at;
      const bf=b.date_mode==='window'?b.window_start:b.starts_at;
@@ -230,7 +235,7 @@
   }
 
   function calendarNodesOn(key) {
-   return (state.calendar?.time_nodes||[]).filter(n=>n.planned_start&&n.planned_start.slice(0,10)===key)
+   return (state.calendar?.time_nodes||[]).filter(n=>n.planned_start&&calendarDateKey(n.planned_start)===key)
    .sort((a,b)=>String(a.planned_start).localeCompare(String(b.planned_start)));
   }
 
@@ -285,7 +290,7 @@
       html += `<div class="calendar-day ${day.getMonth()!==d.getMonth()?'outside':''} ${dateKey(day)===dateKey(now)?'today':''}" data-date="${key}"><button type="button" class="day-number" data-action="open-day" data-date="${key}" aria-label="查看 ${key} 的 ${todays.length} 项活动">${day.getDate()}</button><div class="day-events">`;
       html += visible.map(s => {
         const isWindow = s.date_mode === 'window';
-        const from = ((isWindow?s.window_start:s.starts_at)||'').slice(0,10), to = ((isWindow?s.window_end:s.ends_at)||from).slice(0,10);
+        const from = calendarDateKey(isWindow?s.window_start:s.starts_at), to = calendarDateKey((isWindow?s.window_end:s.ends_at)||(isWindow?s.window_start:s.starts_at));
         const pos = from === key ? 'start' : to === key ? 'end' : 'middle';
         const cls = `${calendarColorClass(s)} ${isWindow?'window':(s.is_past?'past':'')} ${s.has_risk?'risk':''} ${pos}`;
         const title = `${isWindow?'择日 · ':''}${s.project?.name || s.title}`;
@@ -452,6 +457,7 @@
     modalRoot.innerHTML = `<div class="modal-backdrop"><section class="modal ${wide?'wide':''}" role="dialog" aria-modal="true"><header class="modal-header"><div><h2>${esc(title)}</h2>${subtitle?`<p>${esc(subtitle)}</p>`:''}</div><button type="button" class="modal-close" data-action="close-modal">×</button></header><form id="active-modal-form"><div class="modal-body">${note?`<div class="modal-note ${noteType}">${esc(note)}</div>`:''}<div class="form-grid">${fields.map(f=>fieldHtml(f,initial[f.name])).join('')}</div><p class="form-error" id="modal-error"></p></div><footer class="modal-footer"><button type="button" class="btn btn-secondary" data-action="close-modal">取消</button><button type="submit" class="btn btn-primary">${esc(submitLabel)}</button></footer></form></section></div>`;
     const form = $('#active-modal-form');
     const activeBackdrop = modalRoot.querySelector('.modal-backdrop');
+    form.dataset.initialSnapshot = JSON.stringify([...new FormData(form).entries()]);
     form.addEventListener('submit', async e => {
       e.preventDefault();
       const button = $('button[type="submit"]',form); button.disabled=true; button.textContent='保存中…';
@@ -476,7 +482,7 @@
         } else toast(err.message||'操作失败','error');
       }
     });
-    activeBackdrop.addEventListener('click', e => { if (e.target === activeBackdrop) closeModal(); });
+    activeBackdrop.addEventListener('click', e => { if (e.target === activeBackdrop) requestCloseModal(); });
     const first = $('input:not([type=hidden]),select,textarea',form); if (first) setTimeout(()=>first.focus(),50);
   }
   function fieldHtml(f, initialValue) {
@@ -492,6 +498,13 @@
     return `<div class="form-field ${full?'full':''}"><label>${esc(f.label)}${f.required?' *':''}</label>${input}${f.hint?`<span class="hint">${esc(f.hint)}</span>`:''}</div>`;
   }
   function closeModal() { modalRoot.innerHTML=''; }
+  function requestCloseModal() {
+    const form = $('#active-modal-form', modalRoot);
+    if (form && form.dataset.initialSnapshot !== JSON.stringify([...new FormData(form).entries()])) {
+      if (!window.confirm('当前修改还没有保存，确认放弃吗？')) return;
+    }
+    closeModal();
+  }
   function confirmModal(title, message, onConfirm, options={}) {
     openModal({title,subtitle:options.subtitle||'',wide:options.wide||false,note:message,noteType:options.noteType||'warning',submitLabel:options.submitLabel||'确认执行',fields:options.fields||[],initial:options.initial||{},onSubmit:async values=>{if(options.requireOperator!==false&&!getOperator(true)) throw new Error('已取消：未确认操作人'); await onConfirm(values);}});
   }
@@ -653,7 +666,7 @@
     const b=e.target.closest('[data-action]'); if(!b)return;
     const action=b.dataset.action;
     try {
-      if(action==='close-modal'){closeModal();return;}
+      if(action==='close-modal'){requestCloseModal();return;}
       if(action==='go-projects')return navigate('projects');
       if(action==='go-changes')return navigate('changes');
       if(action==='new-project')return openProjectForm();
@@ -771,7 +784,7 @@
   const searchInput=$('#global-search');
   searchInput.addEventListener('focus',()=>{if(searchInput.value.trim())runGlobalSearch(searchInput.value.trim());});
   searchInput.addEventListener('input',()=>{clearTimeout(state.searchTimer);const q=searchInput.value.trim();if(q.length<2){$('#search-results').classList.add('hidden');state.searchOpen=false;return;}state.searchTimer=setTimeout(()=>runGlobalSearch(q),240);});
-  document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();searchInput.focus();}if(e.key==='Escape'){closeModal();$('#search-results').classList.add('hidden');state.searchOpen=false;}});
+  document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();searchInput.focus();}if(e.key==='Escape'){requestCloseModal();$('#search-results').classList.add('hidden');state.searchOpen=false;}});
   async function runGlobalSearch(q) {
     try {const d=await api(`/api/search?q=${encodeURIComponent(q)}`);const host=$('#search-results');state.searchOpen=true;host.classList.remove('hidden');host.innerHTML=d.results.length?d.results.map(r=>`<button class="search-result" data-search-url="${esc(r.url)}"><strong>${esc(r.title)}</strong><small>${esc(r.type)} · ${esc(r.subtitle||'')}</small></button>`).join(''):`<div class="search-result"><strong>没有匹配结果</strong><small>试试项目名称、联系人、任务或物料名称。</small></div>`;}catch(e){toast(e.message,'error');}
   }
