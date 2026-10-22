@@ -3,7 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    // 样式表加载前先套用已存主题，避免深色用户闪白；与 app.js applyTheme() 同一套规则
+    (function () {
+      try {
+        var theme = localStorage.getItem('theme');
+        var meta = document.querySelector('meta[name="color-scheme"]');
+        if (theme === 'light' || theme === 'dark') {
+          document.documentElement.dataset.theme = theme;
+          if (meta) meta.content = theme;
+        } else if (meta) meta.content = 'light dark';
+      } catch (_) {}
+    })();
+  </script>
   <title>活动执行工作台 · Event Time</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -46,6 +59,7 @@
       <header class="topbar">
         <div class="breadcrumbs"><span class="breadcrumb-muted">工作空间</span><span class="crumb-slash">/</span><strong id="page-title">首页总览</strong></div>
         <div class="top-actions">
+          <button class="icon-button theme-toggle" id="theme-toggle" title="主题：跟随系统" aria-label="切换主题">◐</button>
           <label class="global-search"><span>⌕</span><input id="global-search" placeholder="搜索项目、客户、场地、任务…" autocomplete="off"><kbd>⌘ K</kbd></label>
           <button class="icon-button" id="refresh-button" title="刷新数据">⟳</button>
           <button class="btn btn-primary btn-small" id="top-create-project">＋ 新建项目</button>

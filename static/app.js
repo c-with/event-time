@@ -19,6 +19,30 @@
   const nodeTypes = ['布场','进场','彩排','活动','撤场','交付','截止'];
   const navTitles = {home:'首页总览', projects:'项目台账', resources:'资源总库', changes:'变更待确认'};
 
+  // 主题三态：auto 跟随系统 → light → dark → auto。localStorage key 'theme'，默认 auto；
+  // auto 时移除 html[data-theme] 交给 CSS prefers-color-scheme，light/dark 时显式设置。
+  // index.html <head> 内有同一逻辑的 inline bootstrap，在样式表加载前先套用（防闪白）。
+  const THEME_ORDER = ['auto', 'light', 'dark'];
+  const THEME_ICON = {auto: '◐', light: '☀︎', dark: '☾'}; // ☀︎ 强制文字呈现，避免平台渲染成彩色 emoji
+  const THEME_LABEL = {auto: '主题：跟随系统', light: '主题：浅色', dark: '主题：深色'};
+  function currentTheme() {
+    const stored = localStorage.getItem('theme');
+    return THEME_ORDER.includes(stored) ? stored : 'auto';
+  }
+  function applyTheme() {
+    const mode = currentTheme();
+    if (mode === 'auto') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = mode;
+    const button = $('#theme-toggle');
+    if (button) { button.textContent = THEME_ICON[mode]; button.title = THEME_LABEL[mode]; }
+  }
+  function cycleTheme() {
+    localStorage.setItem('theme', THEME_ORDER[(THEME_ORDER.indexOf(currentTheme()) + 1) % THEME_ORDER.length]);
+    applyTheme();
+  }
+  applyTheme();
+  $('#theme-toggle').addEventListener('click', cycleTheme);
+
   function esc(v) {
     return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
