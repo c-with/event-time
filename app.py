@@ -784,6 +784,9 @@ def create_app(test_config: dict | None = None) -> Flask:
         if not payload.get("force_create") and candidates:
             return jsonify(error="发现名称相同的项目，请确认是否继续新建", duplicate_candidates=[serialize_project(p, compact=True) for p in candidates[:8]]), 409
         fields = {k: payload[k] for k in ("name", "client_id", "client_snapshot", "owner", "phase", "description", "cover_document_id") if k in payload}
+        if fields.get("client_id") == "":
+            # 前端「暂不指定客户」送空字符串；外键要求 NULL 而非空串
+            fields["client_id"] = None
         if fields.get("client_id") and not db.session.get(Client, fields["client_id"]):
             return jsonify(error="所选客户不存在"), 400
         if not fields.get("client_snapshot") and fields.get("client_id"):
