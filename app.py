@@ -127,6 +127,9 @@ db = SQLAlchemy(model_class=Base, session_options={"expire_on_commit": False})
 def create_app(test_config: dict | None = None) -> Flask:
     app = Flask(__name__, static_folder="static", static_url_path="/static")
     app.config.update(
+        # PI-DATA-02 (R2-A)：fallback 隨機 key 會令每次重啟全員登出。刻意保守處理：
+        # 保持 fallback 行為不變（避免破壞現有測試／本地啟動），真正修復喺部署側——
+        # 生產 .env 必須設定 SESSION_SECRET（詳見 docs/audits/audit-d66cf97-pi-cross.md）。
         SECRET_KEY=os.environ.get("SESSION_SECRET") or secrets.token_hex(32),
         SQLALCHEMY_DATABASE_URI=database_url_from_env(),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
@@ -847,35 +850,35 @@ def create_app(test_config: dict | None = None) -> Flask:
     def create_session(project_id):
         payload = request.get_json(silent=True) or {}
         result, status = make_child("sessions", project_id, payload, operator_name())
-        return jsonify(session=result) if status == 201 else (jsonify(result), status)
+        return (jsonify(session=result), status) if status == 201 else (jsonify(result), status)
 
     @app.post("/api/projects/<project_id>/time-nodes")
     @login_required
     def create_time_node(project_id):
         payload = request.get_json(silent=True) or {}
         result, status = make_child("time_nodes", project_id, payload, operator_name())
-        return jsonify(time_node=result) if status == 201 else (jsonify(result), status)
+        return (jsonify(time_node=result), status) if status == 201 else (jsonify(result), status)
 
     @app.post("/api/projects/<project_id>/work-packages")
     @login_required
     def create_work_package(project_id):
         payload = request.get_json(silent=True) or {}
         result, status = make_child("work_packages", project_id, payload, operator_name())
-        return jsonify(work_package=result) if status == 201 else (jsonify(result), status)
+        return (jsonify(work_package=result), status) if status == 201 else (jsonify(result), status)
 
     @app.post("/api/projects/<project_id>/requirements")
     @login_required
     def create_requirement(project_id):
         payload = request.get_json(silent=True) or {}
         result, status = make_child("requirements", project_id, payload, operator_name())
-        return jsonify(requirement=result) if status == 201 else (jsonify(result), status)
+        return (jsonify(requirement=result), status) if status == 201 else (jsonify(result), status)
 
     @app.post("/api/projects/<project_id>/tasks")
     @login_required
     def create_task(project_id):
         payload = request.get_json(silent=True) or {}
         result, status = make_child("tasks", project_id, payload, operator_name())
-        return jsonify(task=result) if status == 201 else (jsonify(result), status)
+        return (jsonify(task=result), status) if status == 201 else (jsonify(result), status)
 
     @app.patch("/api/sessions/<entity_id>")
     @login_required

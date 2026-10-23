@@ -9,8 +9,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import create_app, init_database
-from models import db, Project, Task, RequirementItem, TaskDependency, FieldRevision
+from app import create_app, db, init_database
+from models import Project, Task, RequirementItem, TaskDependency, FieldRevision
 
 
 class RelationsRegressionTest(unittest.TestCase):
