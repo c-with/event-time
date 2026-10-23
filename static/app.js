@@ -395,7 +395,7 @@
     ];
     const cover = p.cover_url ? `<img src="${esc(p.cover_url)}" alt="项目主图">` : 'ET';
     root.innerHTML = `<div class="page-heading"><div><p class="eyebrow">PROJECT / EXECUTION CENTER</p><h1>项目执行中心</h1><p>在同一项目上下文内推进排期、工作包、需求、任务和资料。</p></div><div class="heading-actions"><button class="btn btn-secondary" data-action="go-projects">← 项目台账</button></div></div>
-      <section class="project-detail-head"><div class="detail-cover">${cover}</div><div class="detail-main"><div class="project-title-row">${phaseTag(p.phase)}${p.risks?.length?`<span class="tag red">${p.risk_count} 项风险/待办</span>`:''}</div><h1>${esc(p.name)}</h1><p>${esc(p.description||'尚未填写项目说明。')}</p><div class="detail-meta"><span>客户：${esc(p.client||'待补')}</span><span>负责人：${esc(p.owner||'待指定')}</span><span>场次：${p.session_count}</span><span>最近更新：${fmtDateTime(p.updated_at)}</span></div></div><div class="detail-actions"><button class="btn btn-secondary" data-action="edit-project">编辑项目</button><button class="btn btn-secondary" data-action="upload-project-file">上传资料</button><button class="btn btn-primary" data-action="new-task">＋ 新任务</button></div></section>
+      <section class="project-detail-head"><div class="detail-cover cover-upload-host" data-action="upload-cover" data-entity-type="projects" data-entity-id="${esc(p.id)}" title="上传图片并设为项目封面">${cover}<div class="cover-upload-overlay"><span>⤒ 上传封面</span></div></div><div class="detail-main"><div class="project-title-row">${phaseTag(p.phase)}${p.risks?.length?`<span class="tag red">${p.risk_count} 项风险/待办</span>`:''}</div><h1>${esc(p.name)}</h1><p>${esc(p.description||'尚未填写项目说明。')}</p><div class="detail-meta"><span>客户：${esc(p.client||'待补')}</span><span>负责人：${esc(p.owner||'待指定')}</span><span>场次：${p.session_count}</span><span>最近更新：${fmtDateTime(p.updated_at)}</span></div></div><div class="detail-actions"><button class="btn btn-secondary" data-action="edit-project">编辑项目</button><button class="btn btn-secondary" data-action="upload-project-file">上传资料</button><button class="btn btn-primary" data-action="new-task">＋ 新任务</button></div></section>
       <div class="tab-bar">${tabs.map(([id,label,count])=>`<button class="tab-button ${state.projectTab===id?'active':''}" data-action="project-tab" data-tab="${id}">${label}${count!==null?`<span class="tab-count">${count}</span>`:''}</button>`).join('')}</div>
       <div id="project-tab-content"></div>`;
     const content = $('#project-tab-content');
@@ -416,7 +416,7 @@
   }
   function renderSchedule(p) {
     const sessions = p.sessions || [];
-    return `<div class="page-heading"><div><h2 style="font-size:15px;margin:0">场次与时间节点</h2><p>同一个项目可以包含多个场次；布场、彩排、活动、撤场等节点分别记录。</p></div><div class="heading-actions"><button class="btn btn-secondary" data-action="new-node">＋ 时间节点</button><button class="btn btn-primary" data-action="new-session">＋ 新建场次</button></div></div><div class="entity-list">${sessions.length?sessions.map(s=>`<article class="entity-card"><div class="entity-card-header"><div><h3>${esc(s.title)}</h3><p>${s.date_mode==='window'?`择日窗口：${fmtDate(s.window_start)} — ${fmtDate(s.window_end)}`:`${fmtDateTime(s.starts_at)} — ${fmtDateTime(s.ends_at)}`}</p><p>场地：${esc(s.venue||s.location_text||'待确认')}</p></div><div class="entity-actions"><button data-action="edit-session" data-id="${s.id}">编辑场次</button><button data-action="reschedule-session" data-id="${s.id}">预览改期</button><button data-action="new-node" data-session-id="${s.id}">＋ 时间节点</button></div></div><div class="entity-meta">${statusTag(s.status)}<span class="tag gray">${s.date_mode==='window'?'择日窗口':s.date_mode==='undated'?'日期待定':'固定排期'}</span><span class="tag gray">${s.time_nodes.length} 个节点</span></div>${s.notes?`<p>${esc(s.notes)}</p>`:''}</article>`).join(''):emptyHtml('项目尚无场次','纯物料项目可以没有场次；活动项目可先建草稿，不必编造日期。','<button class="btn btn-primary" data-action="new-session">＋ 新建场次</button>')}</div><section class="panel section-gap"><div class="panel-header"><div><h2>项目时间节点</h2><p>固定节点同时显示图标和文字，时间未确认时保留待确认状态。</p></div></div><div class="panel-body"><div class="entity-list">${p.time_nodes.length?p.time_nodes.map(n=>renderNodeCard(n)).join(''):emptyHtml('暂无时间节点','可以添加多批进场、多次彩排和独立交付节点。','<button class="btn btn-secondary" data-action="new-node">＋ 添加时间节点</button>')}</div></div></section>`;
+    return `<div class="page-heading"><div><h2 style="font-size:15px;margin:0">场次与时间节点</h2><p>同一个项目可以包含多个场次；布场、彩排、活动、撤场等节点分别记录。</p></div><div class="heading-actions"><button class="btn btn-secondary" data-action="new-node">＋ 时间节点</button><button class="btn btn-primary" data-action="new-session">＋ 新建场次</button></div></div><div class="entity-list">${sessions.length?sessions.map(s=>`<article class="entity-card"><div class="entity-card-header"><div><h3>${esc(s.title)}</h3><p>${s.date_mode==='window'?`择日窗口：${fmtDate(s.window_start)} — ${fmtDate(s.window_end)}`:`${fmtDateTime(s.starts_at)} — ${fmtDateTime(s.ends_at)}`}</p><p>场地：${esc(s.venue||s.location_text||'待确认')}</p></div><div class="entity-actions"><button data-action="edit-session" data-id="${s.id}">编辑场次</button><button data-action="upload-cover" data-entity-type="sessions" data-entity-id="${s.id}" data-session-id="${s.id}" title="上传图片并设为该场次封面">设封面</button><button data-action="reschedule-session" data-id="${s.id}">预览改期</button><button data-action="new-node" data-session-id="${s.id}">＋ 时间节点</button></div></div><div class="entity-meta">${statusTag(s.status)}<span class="tag gray">${s.date_mode==='window'?'择日窗口':s.date_mode==='undated'?'日期待定':'固定排期'}</span><span class="tag gray">${s.time_nodes.length} 个节点</span></div>${s.notes?`<p>${esc(s.notes)}</p>`:''}</article>`).join(''):emptyHtml('项目尚无场次','纯物料项目可以没有场次；活动项目可先建草稿，不必编造日期。','<button class="btn btn-primary" data-action="new-session">＋ 新建场次</button>')}</div><section class="panel section-gap"><div class="panel-header"><div><h2>项目时间节点</h2><p>固定节点同时显示图标和文字，时间未确认时保留待确认状态。</p></div></div><div class="panel-body"><div class="entity-list">${p.time_nodes.length?p.time_nodes.map(n=>renderNodeCard(n)).join(''):emptyHtml('暂无时间节点','可以添加多批进场、多次彩排和独立交付节点。','<button class="btn btn-secondary" data-action="new-node">＋ 添加时间节点</button>')}</div></div></section>`;
   }
   function renderNodeCard(n) {
     const icons={'布场':'⚒','进场':'↘','彩排':'♫','活动':'⚑','撤场':'⇢','交付':'✓','截止':'◷'};
@@ -714,6 +714,43 @@
     field.outerHTML=`<div class="file-pick-area"><input id="upload-real-files" type="file" accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf" multiple><span class="hint">支持 JPG / PNG / WebP / HEIC / HEIF / PDF，单文件最大 100MB，批量总量最大 250MB。</span></div>`;
   }
 
+  // COVER-1 封面位直接上传：选图 → POST /api/documents → 取 response.documents[0].id → setCover（沿用 confirm＋PATCH＋loadProject）
+  async function uploadCover(entityType, entityId, sessionId='', trigger=null) {
+    if (trigger?.dataset.uploading) return;
+    const labelEl = trigger?.querySelector('.cover-upload-overlay span') || trigger;
+    const prevText = labelEl?.textContent;
+    const setUploading = on => {
+      if (!trigger || !labelEl) return;
+      if (on) { trigger.dataset.uploading='1'; trigger.disabled=true; labelEl.textContent='上传中…'; }
+      else { delete trigger.dataset.uploading; trigger.disabled=false; labelEl.textContent=prevText; }
+    };
+    const input=document.createElement('input');
+    input.type='file'; input.accept='image/*';
+    input.addEventListener('change',async()=>{
+      const file=input.files && input.files[0];
+      if (!file) return; // file picker 取消：不做任何事
+      setUploading(true);
+      try {
+        const form=new FormData();
+        form.append('files',file);
+        form.append('entity_type',entityType||'');
+        form.append('entity_id',entityId||'');
+        form.append('category','主 KV / 主画面');
+        const res=await api('/api/documents',{method:'POST',body:form}); // response 结构：{documents:[...], failures:[...]}（app.py upload_documents）
+        if (res.failures?.length) throw new Error(`封面上传失败：${res.failures.map(f=>f.filename).join('、')}`);
+        const docId=res.documents?.[0]?.id;
+        if (!docId) throw new Error('上传完成但响应中没有文件记录');
+        await setCover(docId,sessionId); // 现有函数不改：confirm → PATCH cover_document_id（带 _revision）→ loadProject
+      } catch(e) {
+        const failedFiles=e.data?.failures?.map(f=>f.filename).join('、'); // 全部失败时后端回 400，详情在 e.data.failures
+        toast(failedFiles?`封面上传失败：${failedFiles}`:(e.message||'封面上传失败'),'error');
+      } finally {
+        setUploading(false); // 成功路径由 loadProject 重渲染接管；这里只负责失败/取消时还原按钮
+      }
+    });
+    input.click();
+  }
+
   async function setCover(docId, sessionId='') {
     const p=state.project;if(!p)return;
     const entity = sessionId ? p.sessions.find(s=>s.id===sessionId) : p;
@@ -759,6 +796,7 @@
       if(action==='upload-project-file')return uploadForm('projects',state.project.id,'项目资料');
       if(action==='upload-resource-file')return uploadForm(state.resourceKind,b.dataset.id,'资源附件');
       if(action==='set-project-cover')return setCover(b.dataset.id);
+      if(action==='upload-cover')return uploadCover(b.dataset.entityType,b.dataset.entityId,b.dataset.sessionId||'',b);
       if(action==='preview-file'){window.open(`/api/documents/${b.dataset.id}/content?variant=preview`,'_blank','noopener');return;}
       if(action==='download-file'){window.open(`/api/documents/${b.dataset.id}/content?variant=download`,'_blank','noopener');return;}
       if(action==='share-file')return shareFile(b.dataset.id);
