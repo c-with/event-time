@@ -201,7 +201,15 @@ def create_app(test_config: dict | None = None) -> Flask:
         return wrapped
 
     def operator_name(required: bool = True) -> str:
-        name = (request.headers.get("X-Operator-Name") or request.headers.get("X-Operator") or "").strip()
+        raw_name = (request.headers.get("X-Operator-Name") or request.headers.get("X-Operator") or "").strip()
+        # 前端對中文姓名做 encodeURIComponent；兼容未編碼的舊值
+        try:
+            from urllib.parse import unquote
+            if "%" in raw_name:
+                raw_name = unquote(raw_name)
+        except Exception:
+            pass
+        name = raw_name
         if not name and not required:
             return "系统"
         if not name:

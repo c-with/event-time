@@ -120,7 +120,7 @@
     if (options.body && !isForm && !headers.has('Content-Type')) headers.set('Content-Type','application/json');
     if (state.csrf && options.method && !['GET','HEAD'].includes(options.method.toUpperCase())) headers.set('X-CSRF-Token', state.csrf);
     const operator = localStorage.getItem('event-time-operator') || '';
-    if (operator) headers.set('X-Operator-Name', operator);
+    if (operator) headers.set('X-Operator-Name', encodeURIComponent(operator)); // 中文姓名須編碼，否則 Headers API 拒收
     const response = await fetch(path, {...options, headers, credentials:'same-origin'});
     const contentType = response.headers.get('content-type') || '';
     let data;
@@ -477,7 +477,8 @@
     badge.classList.toggle('hidden', !n);
   }
 
-  function openModal({title,subtitle='',fields=[],initial={},submitLabel='保存',wide=false,note='',noteType='',onSubmit}) {
+  function openModal(cfg) {
+    const {title,subtitle='',fields=[],initial={},submitLabel='保存',wide=false,note='',noteType='',onSubmit}=cfg;
     modalRoot.innerHTML = `<div class="modal-backdrop"><section class="modal ${wide?'wide':''}" role="dialog" aria-modal="true"><header class="modal-header"><div><h2>${esc(title)}</h2>${subtitle?`<p>${esc(subtitle)}</p>`:''}</div><button type="button" class="modal-close" data-action="close-modal">×</button></header><form id="active-modal-form"><div class="modal-body">${note?`<div class="modal-note ${noteType}">${esc(note)}</div>`:''}<div class="form-grid">${fields.map(f=>fieldHtml(f,initial[f.name])).join('')}</div><p class="form-error" id="modal-error"></p></div><footer class="modal-footer"><button type="button" class="btn btn-secondary" data-action="close-modal">取消</button><button type="submit" class="btn btn-primary">${esc(submitLabel)}</button></footer></form></section></div>`;
     const form = $('#active-modal-form');
     const activeBackdrop = modalRoot.querySelector('.modal-backdrop');
@@ -507,6 +508,11 @@
       }
     });
     activeBackdrop.addEventListener('click', e => { if (e.target === activeBackdrop) requestCloseModal(); });
+    fields.forEach(f => {
+      if (!f.quickAdd) return;
+      const btn = $(`[data-quick-add="${CSS.escape(f.name)}"]`, form);
+      if (btn) btn.addEventListener('click', () => triggerQuickAdd(f, cfg, form));
+    });
     const first = $('input:not([type=hidden]),select,textarea',form); if (first) setTimeout(()=>first.focus(),50);
   }
   function fieldHtml(f, initialValue) {
@@ -516,12 +522,17 @@
     if (f.type === 'textarea') input = `<textarea name="${esc(f.name)}" ${f.required?'required':''} placeholder="${esc(f.placeholder||'')}">${esc(val)}</textarea>`;
     else if (f.type === 'select') {
       const values = f.options || [];
-      input = `<select name="${esc(f.name)}" ${f.required?'required':''} ${f.multiple?'multiple size="4"':''}><option value="">${esc(f.placeholder||'请选择')}</option>${values.map(o=>{const value=typeof o==='string'?o:o.value;const label=typeof o==='string'?o:o.label;const selected=f.multiple?(Array.isArray(val)&&val.includes(value)):String(val)===String(value);return `<option value="${esc(value)}" ${selected?'selected':''}>${esc(label)}</option>`}).join('')}</select>`;
+      input = `<select name="${esc(f.name)}" ${f.required?'required':''} ${f.multiple?'multiple size="4"':''}><option value="">${esc(f.placeholder||'请选择')}</option>${values.map(o=>{const value=typeof o==='string'?o:o.value;const label=typeof o==='string'?o:o.label;const selected=f.multiple?(Array.isArray(val)&&val.includes(value)):String(val)===String(value);return `<option value="${esc(value)}" ${selected?'selected':''}>${esc(label)}</option>`}).join('')}</select>${f.quickAdd?`<button type="button" class="text-link quick-add-btn" data-quick-add="${esc(f.name)}">${esc(f.quickAdd.label||'＋ 快捷新增')}</button>`:''}`;
     } else if (f.type==='checkbox') input = `<label style="display:flex;align-items:center;gap:8px;font-weight:500"><input style="width:auto" type="checkbox" name="${esc(f.name)}" ${val?'checked':''}>${esc(f.checkboxLabel||f.label)}</label>`;
     else input = `<input name="${esc(f.name)}" type="${esc(f.type||'text')}" value="${esc(f.type==='datetime-local'?fmtDateTimeInput(val):val)}" ${f.required?'required':''} ${f.placeholder?`placeholder="${esc(f.placeholder)}"`:''} ${f.min?`min="${esc(f.min)}"`:''} ${f.step?`step="${esc(f.step)}"`:''}>`;
     return `<div class="form-field ${full?'full':''}"><label>${esc(f.label)}${f.required?' *':''}</label>${input}${f.hint?`<span class="hint">${esc(f.hint)}</span>`:''}</div>`;
   }
-  function closeModal() { modalRoot.innerHTML=''; }
+  let pendingModalRestore = null; // quick-add 二级弹窗打开期间挂起；closeModal 时用它重建第一层表单
+  function closeModal() {
+    modalRoot.innerHTML='';
+    const restore = pendingModalRestore; pendingModalRestore=null;
+    if (restore) restore();
+  }
   function requestCloseModal() {
     const form = $('#active-modal-form', modalRoot);
     if (form && form.dataset.initialSnapshot !== JSON.stringify([...new FormData(form).entries()])) {
@@ -539,9 +550,55 @@
     if (!state.resources[kind]) { const data=await api(`/api/resources/${kind}`); state.resources[kind]=data.resources; }
     return state.resources[kind];
   }
+  const RESOURCE_FORM_SPECS = {
+    clients:[{name:'name',label:'客户名称',required:true},{name:'aliases',label:'别名/简称'},{name:'notes',label:'备注',type:'textarea',full:true}],
+    suppliers:[{name:'name',label:'供应商公司/团队名称',required:true},{name:'service_category',label:'服务类型',placeholder:'舞台 / LED / 印刷 / 摄影'},{name:'notes',label:'备注',type:'textarea',full:true}],
+    contacts:[{name:'name',label:'联系人姓名',required:true},{name:'role',label:'职务/角色'},{name:'supplier_id',label:'所属供应商',type:'select',options:()=>resourceOptions('suppliers','未确认供应商')},{name:'client_id',label:'所属客户',type:'select',options:()=>resourceOptions('clients','未确认客户')},{name:'phone',label:'电话'},{name:'email',label:'邮箱'},{name:'source_text',label:'来源原文',type:'textarea',full:true},{name:'notes',label:'备注',type:'textarea',full:true}],
+    venues:[{name:'name',label:'场地名称',required:true},{name:'address',label:'地址',full:true},{name:'verified_status',label:'核实状态',type:'select',options:['待核实','已核实','需要更新']},{name:'verified_by',label:'核实人'},{name:'notes',label:'备注/装卸说明',type:'textarea',full:true}],
+    venue_spaces:[{name:'venue_id',label:'所属场地',type:'select',required:true,options:()=>resourceOptions('venues','请选择场地')},{name:'parent_space_id',label:'上级空间',type:'select',options:()=>resourceOptions('venue_spaces','无上级空间')},{name:'name',label:'空间名称',required:true},{name:'space_type',label:'空间类型',type:'select',options:['楼栋','楼层','厅室','室外区域','装卸点','其他']},{name:'floor_label',label:'楼层标识'},{name:'verified_status',label:'核实状态',type:'select',options:['待核实','已核实','需要更新']},{name:'verified_by',label:'核实人'},{name:'details',label:'空间详情/动线/限制',type:'textarea',full:true}],
+    equipment:[{name:'space_id',label:'所属空间',type:'select',options:()=>resourceOptions('venue_spaces','暂未关联空间')},{name:'name',label:'设备名称',required:true},{name:'category',label:'设备类别',placeholder:'LED / 音响 / 灯光 / 货梯'},{name:'ownership',label:'所有权',type:'select',options:['场地固定','自有资产','租赁设备','其他']},{name:'physical_dimensions',label:'物理尺寸',placeholder:'区分物理尺寸与分辨率'},{name:'resolution',label:'分辨率'},{name:'pixel_pitch',label:'像素间距'},{name:'verified_status',label:'核实状态',type:'select',options:['待核实','已核实','需要更新']},{name:'verified_by',label:'核实人'},{name:'loading_notes',label:'装卸/运输注意事项',type:'textarea',full:true},{name:'power_audio_notes',label:'供电/音响灯光说明',type:'textarea',full:true},{name:'source_text',label:'来源原文',type:'textarea',full:true}],
+  };
+  const RESOURCE_LABELS = {clients:'客户',suppliers:'供应商',contacts:'联系人',venues:'场地',venue_spaces:'场地空间',equipment:'固定设备'};
+  // specs 里的跨资源下拉写成 () => resourceOptions(...)：在表单真正打开时（ensureResource 之后）才解析，
+  // 避免 const 提升到模块层时拿到空的 state.resources。
+  const specFields = kind => (RESOURCE_FORM_SPECS[kind]||[]).map(f=>({...f, options: typeof f.options==='function'?f.options():f.options, full:f.full||f.type==='textarea'}));
+  // 快捷新增：在主表单（项目/工作包等）里就地弹二级 modal 创建资源。
+  // openModal 会整体替换 modalRoot，第一层表单 DOM（连同已填值）会被销毁，所以打开二级前
+  // 先 snapshot 实时值与 initialSnapshot 基线；二级关闭（无论提交或取消）都由 closeModal 重建第一层。
+  function triggerQuickAdd(field, cfg, form) {
+    const live={};
+    cfg.fields.forEach(f=>{
+      const input=$(`[name="${CSS.escape(f.name)}"]`,form);
+      if(!input)return;
+      if(f.type==='checkbox')live[f.name]=input.checked;
+      else if(f.multiple)live[f.name]=[...input.selectedOptions].map(o=>o.value).filter(Boolean);
+      else live[f.name]=input.value;
+    });
+    const baseline=form.dataset.initialSnapshot;
+    const kind=field.quickAdd.resourceKind;
+    let createdId='', createdName='';
+    pendingModalRestore=()=>restoreModalAfterQuickAdd(cfg,live,baseline,field,createdId,createdName);
+    openModal({title:`快捷新增${RESOURCE_LABELS[kind]||'资源'}`,subtitle:'保存后会自动选入当前表单，已填写的内容不会丢失。',fields:specFields(kind),submitLabel:'新建并选用',onSubmit:async values=>{
+      const data=await api(`/api/resources/${kind}`,json('POST',values));
+      createdId=data.resource?.id||''; createdName=data.resource?.name||values.name||'';
+      try { delete state.resources[kind]; await ensureResource(kind); }
+      catch(_) { toast('资源已创建，但刷新选项列表失败，稍后可手动刷新','warn'); }
+      toast(`${RESOURCE_LABELS[kind]||'资源'}「${createdName}」已创建并选入表单`);
+    }});
+  }
+  function restoreModalAfterQuickAdd(cfg,live,baseline,field,createdId,createdName) {
+    if(createdId){
+      field.options=resourceOptions(field.quickAdd.resourceKind, field.options?.[0]?.label||'请选择');
+      if(!field.options.some(o=>String(o.value)===String(createdId))) field.options.push({value:createdId,label:createdName});
+    }
+    openModal({...cfg,initial:{...live,...(createdId?{[field.name]:createdId}:{})}});
+    const form=$('#active-modal-form',modalRoot);
+    if(form&&baseline)form.dataset.initialSnapshot=baseline; // 还原“未保存修改”守护的原始基线
+    if(createdId){const sel=$(`[name="${CSS.escape(field.name)}"]`,modalRoot);if(sel)setTimeout(()=>sel.focus(),60);}
+  }
   async function openProjectForm(project=null) {
     await ensureResource('clients');
-    const fields=[{name:'name',label:'项目名称',required:true,full:true},{name:'client_id',label:'客户',type:'select',options:resourceOptions('clients','暂不指定客户')},{name:'owner',label:'主要负责人',placeholder:'例如 JC / 任雪'},{name:'phase',label:'项目阶段',type:'select',options:phaseOptions},{name:'description',label:'项目说明',type:'textarea',full:true,placeholder:'记录项目范围、交付边界或待确认事项'}];
+    const fields=[{name:'name',label:'项目名称',required:true,full:true},{name:'client_id',label:'客户',type:'select',options:resourceOptions('clients','暂不指定客户'),quickAdd:{resourceKind:'clients',label:'＋ 顺手新增客户'}},{name:'owner',label:'主要负责人',placeholder:'例如 JC / 任雪'},{name:'phase',label:'项目阶段',type:'select',options:phaseOptions},{name:'description',label:'项目说明',type:'textarea',full:true,placeholder:'记录项目范围、交付边界或待确认事项'}];
     openModal({title:project?'编辑项目基本信息':'新建项目',subtitle:project?'项目内部 ID 保持不变；重要字段变更会进入待确认流程。':'项目可先建草稿；日期、场地或供应商未定不会阻止登记。',fields,initial:project?{...project,client_id:project.client_id||'',phase:project.phase||'新登记'}:{phase:'新登记'},submitLabel:project?'保存修改':'建立项目',note:project?'名称、客户或项目阶段属于重要字段，保存后会生成变更提案，正式值在确认前保持不变。':'系统会生成稳定的内部 ID。若名称重复，会提示你确认，不会自动合并。',onSubmit:async values=>{
       if (!values.name.trim()) throw new Error('项目名称不能为空');
       if (project) {
@@ -591,7 +648,7 @@
   }
   async function openPackageForm(pkg=null) {
     const p=state.project;if(!p)return; await ensureResource('suppliers');
-    const fields=[{name:'name',label:'工作包名称',required:true,full:true},{name:'supplier_id',label:'供应商公司',type:'select',options:resourceOptions('suppliers','暂未确定供应商')},{name:'contact_snapshot',label:'联系人/对接人',placeholder:'例如 罗总、波总、小胡；未确认所属公司可只记联系人'},{name:'status',label:'工作包状态',type:'select',options:packageStatus},{name:'responsibility',label:'责任范围',type:'textarea',full:true},{name:'description',label:'说明',type:'textarea',full:true},{name:'acceptance_criteria',label:'验收标准',type:'textarea',full:true},{name:'planned_entry_at',label:'计划进场',type:'datetime-local'},{name:'planned_strike_at',label:'计划撤场',type:'datetime-local'}];
+    const fields=[{name:'name',label:'工作包名称',required:true,full:true},{name:'supplier_id',label:'供应商公司',type:'select',options:resourceOptions('suppliers','暂未确定供应商'),quickAdd:{resourceKind:'suppliers',label:'＋ 顺手新增供应商'}},{name:'contact_snapshot',label:'联系人/对接人',placeholder:'例如 罗总、波总、小胡；未确认所属公司可只记联系人'},{name:'status',label:'工作包状态',type:'select',options:packageStatus},{name:'responsibility',label:'责任范围',type:'textarea',full:true},{name:'description',label:'说明',type:'textarea',full:true},{name:'acceptance_criteria',label:'验收标准',type:'textarea',full:true},{name:'planned_entry_at',label:'计划进场',type:'datetime-local'},{name:'planned_strike_at',label:'计划撤场',type:'datetime-local'}];
     openModal({title:pkg?'编辑工作包':'新增执行工作包',subtitle:'供应商公司与联系人分开记录；供应商可以暂时留空。',fields,initial:pkg?pkg:{status:'待指派'},submitLabel:pkg?'保存工作包':'建立工作包',onSubmit:async values=>{
       if(pkg){const d=await api(`/api/work-packages/${pkg.id}`,json('PATCH',{...values,_revision:pkg.revision}));if(d.proposed_changes?.length)toast('供应商/验收等重要变更已提交待确认','warn');}
       else await api(`/api/projects/${p.id}/work-packages`,json('POST',values));
@@ -626,18 +683,9 @@
   }
 
   async function openResourceForm(kind=state.resourceKind, resource=null) {
-    const specs={
-      clients:[{name:'name',label:'客户名称',required:true},{name:'aliases',label:'别名/简称'},{name:'notes',label:'备注',type:'textarea',full:true}],
-      suppliers:[{name:'name',label:'供应商公司/团队名称',required:true},{name:'service_category',label:'服务类型',placeholder:'舞台 / LED / 印刷 / 摄影'},{name:'notes',label:'备注',type:'textarea',full:true}],
-      contacts:[{name:'name',label:'联系人姓名',required:true},{name:'role',label:'职务/角色'},{name:'supplier_id',label:'所属供应商',type:'select',options:resourceOptions('suppliers','未确认供应商')},{name:'client_id',label:'所属客户',type:'select',options:resourceOptions('clients','未确认客户')},{name:'phone',label:'电话'},{name:'email',label:'邮箱'},{name:'source_text',label:'来源原文',type:'textarea',full:true},{name:'notes',label:'备注',type:'textarea',full:true}],
-      venues:[{name:'name',label:'场地名称',required:true},{name:'address',label:'地址',full:true},{name:'verified_status',label:'核实状态',type:'select',options:['待核实','已核实','需要更新']},{name:'verified_by',label:'核实人'},{name:'notes',label:'备注/装卸说明',type:'textarea',full:true}],
-      venue_spaces:[{name:'venue_id',label:'所属场地',type:'select',required:true,options:resourceOptions('venues','请选择场地')},{name:'parent_space_id',label:'上级空间',type:'select',options:resourceOptions('venue_spaces','无上级空间')},{name:'name',label:'空间名称',required:true},{name:'space_type',label:'空间类型',type:'select',options:['楼栋','楼层','厅室','室外区域','装卸点','其他']},{name:'floor_label',label:'楼层标识'},{name:'verified_status',label:'核实状态',type:'select',options:['待核实','已核实','需要更新']},{name:'verified_by',label:'核实人'},{name:'details',label:'空间详情/动线/限制',type:'textarea',full:true}],
-      equipment:[{name:'space_id',label:'所属空间',type:'select',options:resourceOptions('venue_spaces','暂未关联空间')},{name:'name',label:'设备名称',required:true},{name:'category',label:'设备类别',placeholder:'LED / 音响 / 灯光 / 货梯'},{name:'ownership',label:'所有权',type:'select',options:['场地固定','自有资产','租赁设备','其他']},{name:'physical_dimensions',label:'物理尺寸',placeholder:'区分物理尺寸与分辨率'},{name:'resolution',label:'分辨率'},{name:'pixel_pitch',label:'像素间距'},{name:'verified_status',label:'核实状态',type:'select',options:['待核实','已核实','需要更新']},{name:'verified_by',label:'核实人'},{name:'loading_notes',label:'装卸/运输注意事项',type:'textarea',full:true},{name:'power_audio_notes',label:'供电/音响灯光说明',type:'textarea',full:true},{name:'source_text',label:'来源原文',type:'textarea',full:true}],
-    };
     if(['contacts','venue_spaces','equipment'].includes(kind)){await ensureResource('suppliers');await ensureResource('clients');await ensureResource('venues');await ensureResource('venue_spaces');}
-    const labels={clients:'客户',suppliers:'供应商',contacts:'联系人',venues:'场地',venue_spaces:'场地空间',equipment:'固定设备'};
-    const fields=(specs[kind]||[]).map(f=>({...f,full:f.full||f.type==='textarea'}));
-    openModal({title:resource?`编辑${labels[kind]}`:`新建${labels[kind]}`,subtitle:'资源主档可以跨项目复用；项目历史快照不会被静默改写。',fields,initial:resource||{},submitLabel:resource?'保存修改':'新建资源',onSubmit:async values=>{
+    const fields=specFields(kind);
+    openModal({title:resource?`编辑${RESOURCE_LABELS[kind]}`:`新建${RESOURCE_LABELS[kind]}`,subtitle:'资源主档可以跨项目复用；项目历史快照不会被静默改写。',fields,initial:resource||{},submitLabel:resource?'保存修改':'新建资源',onSubmit:async values=>{
       const endpoint=`/api/resources/${kind}`;
       if(resource) await api(`${endpoint}/${resource.id}`,json('PATCH',{...values,_revision:resource.revision,source_text:values.source_text}));
       else await api(endpoint,json('POST',values));
