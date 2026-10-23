@@ -336,7 +336,10 @@
       const dt = n.planned_start ? new Date(n.planned_start) : null;
       const day = dt && !Number.isNaN(dt.getTime()) ? dt.getDate() : '—';
       const month = dt && !Number.isNaN(dt.getTime()) ? `${dt.getMonth()+1}月` : '待定';
-      return `<div class="agenda-item"><div class="agenda-date"><strong>${day}</strong><small>${month}</small></div><div class="agenda-content"><strong>${esc(n.label)} ${statusTag(n.date_status)}</strong><p>${esc(n.project_name)}${n.session_title?' · '+esc(n.session_title):''}</p><p>${fmtDateTime(n.planned_start)}${n.responsible?' · '+esc(n.responsible):''}</p></div></div>`;
+      const daysAhead = dt && !Number.isNaN(dt.getTime()) ? Math.round((new Date(dateKey(dt)) - new Date(dateKey(new Date()))) / 86400000) : null;
+      const todayTag = daysAhead === 0 ? '<span class="tag green">今日</span>' : '';
+      const soonTag = n.is_upcoming_soon && daysAhead !== 0 ? '<span class="tag orange">即将到来</span>' : '';
+      return `<div class="agenda-item"><div class="agenda-date"><strong>${day}</strong><small>${month}</small></div><div class="agenda-content"><strong>${esc(n.label)} ${statusTag(n.date_status)} ${todayTag}${soonTag}</strong><p>${esc(n.project_name)}${n.session_title?' · '+esc(n.session_title):''}</p><p>${fmtDateTime(n.planned_start)}${n.responsible?' · '+esc(n.responsible):''}</p></div></div>`;
     }).join('');
   }
   function renderAttention(dashboard) {

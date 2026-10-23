@@ -735,7 +735,30 @@ def create_app(test_config: dict | None = None) -> Flask:
         pending = db.session.scalars(select(ChangeRequest).where(ChangeRequest.status.in_(["pending", "conflict"])).order_by(ChangeRequest.created_at.desc()).limit(30)).all()
         nodes = db.session.scalars(select(TimeNode).where(TimeNode.planned_start.is_not(None)).order_by(TimeNode.planned_start).limit(300)).all()
         upcoming_nodes = [serialize_time_node(n) | {"project_name": n.project.name, "session_title": n.session.title if n.session else ""}
-                          for n in nodes if aware(n.planned_start).date() <= today + timedelta(days=7) and aware(n.planned_start).date() >= today - timedelta(days=1)]
+                          for n in nodes if today - timedelta(days=1) <= aware(n.planned_start).date() <= today + timedelta(days=7)]
+        sessions = db.session.scalars(select(EventSession).join(Project, EventSession.project_id == Project.id).where(
+            Project.phase != "已归档", EventSession.status.notin_(["已取消", "取消"]),
+            EventSession.date_mode == "fixed", EventSession.starts_at.is_not(None))).all()
+        linked_session_ids = {n.get("session_id") for n in upcoming_nodes}
+        for s in sessions:
+            if s.id in linked_session_ids:
+                continue
+            if not (today - timedelta(days=1) <= aware(s.starts_at).date() <= today + timedelta(days=7)):
+                continue
+            upcoming_nodes.append({
+                "id": s.id, "project_id": s.project_id, "session_id": s.id, "work_package_id": None,
+                "node_type": "活动", "label": s.title or "活动日", "is_session": True, "source": "session",
+                "planned_start": as_iso(s.starts_at), "planned_end": as_iso(s.ends_at),
+                "confirmed_start": None, "confirmed_end": None, "actual_start": None, "actual_end": None,
+                "date_status": s.status, "move_rule": "", "responsible": getattr(s, "owner", "") or "",
+                "source_text": "", "status": s.status,
+                "notes": "", "revision": s.revision,
+                "is_upcoming_soon": today <= aware(s.starts_at).date() <= today + timedelta(days=2),
+                "project_name": s.project.name, "session_title": s.title,
+            })
+        today_iso = today.isoformat()
+        upcoming_nodes.sort(key=lambda n: (0 if str(n.get("planned_start") or "")[:10] == today_iso else 1 if n.get("is_upcoming_soon") else 2,
+                                           str(n.get("planned_start") or "")))
         return jsonify(today=today.isoformat(), counts={"projects": len(projects), "today_nodes": sum(1 for n in upcoming_nodes if str(n.get("planned_start", ""))[:10] == today.isoformat()),
             "overdue_tasks": len(overdue_tasks), "pending_changes": len(pending)}, projects=summaries[:12], overdue_tasks=overdue_tasks[:20],
             pending_changes=[serialize_change(c) for c in pending], upcoming_nodes=upcoming_nodes)
