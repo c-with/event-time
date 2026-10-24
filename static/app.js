@@ -129,7 +129,11 @@
     if (response.status === 401 && path !== '/api/login') showLogin();
     if (!response.ok) {
       const error = new Error(data?.error || `请求失败 (${response.status})`);
-      error.status = response.status; error.data = data; throw error;
+      error.status = response.status; error.data = data;
+      // SEC-05：後端 409 detail 已改為結構化 kind；補一句人話提示（主文保持後端 error）
+      const hint = {foreign_key:'关联数据不存在，请刷新后重试', duplicate:'名称重复，请改名后重试'}[data?.detail?.kind];
+      if (hint) error.message += `（${hint}）`;
+      throw error;
     }
     return data;
   }
@@ -845,7 +849,7 @@
   async function archiveProject() {
     const p=state.project;if(!p)return;
     confirmModal('归档项目','归档不会删除项目、历史文件或审计记录。请先核对交付文件、现场照片、未完成任务与供应商履约；资料未齐时可先将项目阶段改为“收尾”。',async()=>{
-      await api(`/api/projects/${p.id}/archive`,json('POST',{confirm:true}));toast('项目已归档');state.page='projects';state.projectId='';location.hash='#/projects';await loadProjects();
+      await api(`/api/projects/${p.id}/archive`,json('POST',{confirm:true,_revision:p.revision}));toast('项目已归档');state.page='projects';state.projectId='';location.hash='#/projects';await loadProjects();
     },{requireOperator:true,submitLabel:'确认归档',noteType:'warning'});
   }
   async function restoreAudit(id) {

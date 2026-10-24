@@ -121,6 +121,31 @@ def database_url_from_env() -> str:
     return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{name}"
 
 
+def classify_integrity_error(error: IntegrityError) -> str:
+    """SEC-05：將驅動層 IntegrityError 歸一化成穩定標籤，唔向前端洩漏 SQL 原文。
+
+    PostgreSQL 喺 driver 例外上有 SQLSTATE（psycopg: sqlstate / psycopg2: pgcode）；
+    SQLite 只有訊息文字。兩種方言都喺呢度收斂成同一組 kind。
+    """
+    orig = getattr(error, "orig", None)
+    code = str(getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None) or "")
+    # SQLSTATE 先行（權威）；約束名可能含誤導字眼，文字匹配只做冇 code 時嘅 fallback
+    if code == "23505":
+        return "duplicate"
+    if code == "23503":
+        return "foreign_key"
+    if code == "23514":
+        return "check"
+    message = str(orig or error).lower()
+    if "unique" in message or "duplicate key" in message:
+        return "duplicate"
+    if "foreign key" in message:
+        return "foreign_key"
+    if "check constraint" in message:
+        return "check"
+    return "constraint"
+
+
 db = SQLAlchemy(model_class=Base, session_options={"expire_on_commit": False})
 
 
@@ -175,7 +200,10 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.errorhandler(IntegrityError)
     def integrity_error(error):
         db.session.rollback()
-        return jsonify(error="数据约束冲突；请刷新数据后重试", detail=str(error.orig)[:240]), 409
+        # SEC-05：detail 只返結構化 kind；完整原文入 log 以便排查
+        app.logger.info("IntegrityError on %s %s: %s", request.method, request.path, error)
+        return jsonify(error="数据约束冲突；请刷新数据后重试",
+                       detail={"kind": classify_integrity_error(error)}), 409
 
     @app.errorhandler(HTTPException)
     def http_error(error):
@@ -690,9 +718,12 @@ def create_app(test_config: dict | None = None) -> Flask:
             db.session.execute(text("SELECT 1"))
             database = "postgresql" if "postgresql" in app.config["SQLALCHEMY_DATABASE_URI"] else "sqlite-test"
             return jsonify(ok=True, database=database, version="0.4.1")
-        except Exception as exc:
+        except Exception:
+            # SEC-04：唔好向匿名探測洩漏 DB 連線原文；原文入 log。
+            # 保持 503：compose healthcheck 以 urlopen 非 2xx 判 unhealthy，語義不變。
             db.session.rollback()
-            return jsonify(ok=False, error=str(exc)[:200]), 503
+            app.logger.exception("Health check failed: database unreachable")
+            return jsonify(ok=False, error="数据库暂时不可用"), 503
 
     @app.post("/api/login")
     def login():
@@ -855,10 +886,19 @@ def create_app(test_config: dict | None = None) -> Flask:
         payload = request.get_json(silent=True) or {}
         if payload.get("confirm") is not True:
             return jsonify(error="归档需要显式确认"), 400
+        # DATA-02：歸檔同其他 PATCH 一樣走樂觀鎖，唔可以憑 stale 頁面歸檔
+        try:
+            expected_revision = int(payload["_revision"])
+        except (KeyError, ValueError, TypeError):
+            return jsonify(error="归档请求必须携带 _revision，请刷新后重试"), 400
         actor = operator_name()
         project = db.session.get(Project, project_id)
         if not project:
             return jsonify(error="项目不存在"), 404
+        if expected_revision != project.revision:
+            return jsonify(error="项目已被其他设备修改，归档前请刷新确认最新状态",
+                           conflicts=[{"field": "phase", "current": project.phase, "incoming": "已归档"}],
+                           revision=project.revision), 409
         before = {"phase": project.phase, "archived_at": as_iso(project.archived_at)}
         project.phase, project.archived_at = "已归档", utcnow()
         project.revision += 1
