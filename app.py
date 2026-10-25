@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Event Time / 活动执行工作台 V0.4.1.
+"""Event Time / 活动执行工作台 V0.5.0.
 
 PostgreSQL is the production source of truth. SQLite is supported only for local tests.
 All structured business writes go to normalized entity tables; there is no state-document write path.
@@ -717,7 +717,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         try:
             db.session.execute(text("SELECT 1"))
             database = "postgresql" if "postgresql" in app.config["SQLALCHEMY_DATABASE_URI"] else "sqlite-test"
-            return jsonify(ok=True, database=database, version="0.4.1")
+            return jsonify(ok=True, database=database, version="0.5.0")
         except Exception:
             # SEC-04：唔好向匿名探測洩漏 DB 連線原文；原文入 log。
             # 保持 503：compose healthcheck 以 urlopen 非 2xx 判 unhealthy，語義不變。
@@ -1607,7 +1607,7 @@ def seed_demo_data():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="活动执行工作台 V0.4.1")
+    parser = argparse.ArgumentParser(description="活动执行工作台 V0.5.0")
     parser.add_argument("command", choices=["serve", "init-db", "seed-demo"], nargs="?", default="serve")
     args = parser.parse_args()
     app = create_app()
